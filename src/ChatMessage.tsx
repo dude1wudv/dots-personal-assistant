@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { FileText, Paperclip } from 'lucide-react'
 import { download } from './api'
@@ -32,11 +32,14 @@ function useRevealedText(text: string, animate: boolean, onGrowth?: () => void) 
 export function ChatMessage({ item, onError, animate = false, onGrowth }: { item: ChatItem; onError: (text: string) => void; animate?: boolean; onGrowth?: () => void }) {
   const assistant = item.role === 'assistant'
   const shown = useRevealedText(item.text, assistant && animate, onGrowth)
+  // Stable component identities keep polling and text updates from remounting
+  // existing paragraphs and replaying their entry animation.
+  const components = useMemo<Components>(() => ({
+    p: ({ children }) => assistant && typeof children === 'string' ? <>{paragraphChunks(children).map((part, index) => <p key={index}>{part}</p>)}</> : <p>{children}</p>,
+    a: ({ href, children }) => href?.startsWith('/workspace/') ? <button className="file-link" onClick={() => download(href.slice(11).split(':')[0], href.split('/').pop()?.split(':')[0] || '文件').catch(e => onError(e.message))}><FileText size={14}/>{children}</button> : <a href={href} target="_blank" rel="noreferrer">{children}</a>,
+  }), [assistant, onError])
   return <article className={`chat-message ${item.role}`}><div className={`message-content ${assistant ? 'reply-blocks' : ''}`} aria-busy={shown !== item.text}>
-    <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={url => url.startsWith('/workspace/') ? url : /^(https?:|mailto:)/.test(url) ? url : ''} components={{
-      p: ({ children }) => assistant && typeof children === 'string' ? <>{paragraphChunks(children).map((part, index) => <p key={index}>{part}</p>)}</> : <p>{children}</p>,
-      a: ({ href, children }) => href?.startsWith('/workspace/') ? <button className="file-link" onClick={() => download(href.slice(11).split(':')[0], href.split('/').pop()?.split(':')[0] || '文件').catch(e => onError(e.message))}><FileText size={14}/>{children}</button> : <a href={href} target="_blank" rel="noreferrer">{children}</a>,
-    }}>{shown}</ReactMarkdown>
+    <ReactMarkdown remarkPlugins={[remarkGfm]} urlTransform={url => url.startsWith('/workspace/') ? url : /^(https?:|mailto:)/.test(url) ? url : ''} components={components}>{shown}</ReactMarkdown>
     {item.data?.attachments?.map(path => <button key={path} className="attachment-chip" onClick={() => download(path, path.split('/').pop() || '附件').catch(e => onError(e.message))}><Paperclip size={14}/>{path.split('/').pop()}</button>)}
   </div></article>
 }
