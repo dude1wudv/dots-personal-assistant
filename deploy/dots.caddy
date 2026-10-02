@@ -1,0 +1,27 @@
+{$DOTS_DOMAIN} {
+    encode zstd gzip
+    request_body {
+        max_size 24MB
+    }
+    @downloads path /download/*
+    handle @downloads {
+        root * /opt/dots/public
+        header Content-Disposition "attachment"
+        file_server
+    }
+    handle {
+        reverse_proxy 127.0.0.1:8091 {
+            header_up X-Dots-Client-IP {client_ip}
+            flush_interval -1
+            transport http {
+                response_header_timeout 120s
+            }
+        }
+    }
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy no-referrer
+        Strict-Transport-Security "max-age=31536000"
+    }
+}

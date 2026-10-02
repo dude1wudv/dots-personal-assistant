@@ -1,0 +1,26 @@
+model = "gpt-6.1-sol"
+model_provider = "sub2api"
+model_reasoning_effort = "high"
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+model_catalog_json = "/opt/dots/models.json"
+
+[model_providers.sub2api]
+name = "Sub2API · 自用"
+base_url = "http://api:8091/inference/v1"
+env_key = "AGENT_TOKEN"
+wire_api = "responses"
+request_max_retries = 2
+stream_max_retries = 2
+stream_idle_timeout_ms = 300000
+
+[sandbox_workspace_write]
+network_access = false
+
+[mcp_servers.dots_computer]
+command = "python"
+args = ["/opt/dots/browser_mcp.py"]
+env_vars = ["AGENT_TOKEN"]
+startup_timeout_sec = 30
+tool_timeout_sec = 1900
+required = true

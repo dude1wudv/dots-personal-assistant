@@ -1,0 +1,55 @@
+apply plugin: 'com.android.application'
+def apiOrigin = System.getenv('VITE_DOTS_API_ORIGIN') ?: 'https://dots.example.com'
+if (!(apiOrigin ==~ /https:\/\/[A-Za-z0-9.-]+(:[0-9]+)?/)) {
+    throw new GradleException('VITE_DOTS_API_ORIGIN must be an HTTPS origin without a path')
+}
+if (gradle.startParameter.taskNames.any { it.toLowerCase().contains('release') } &&
+    (!System.getenv('VITE_DOTS_API_ORIGIN') || new URI(apiOrigin).host.endsWith('example.com'))) {
+    throw new GradleException('Release requires your own explicit VITE_DOTS_API_ORIGIN, not an example domain')
+}
+
+android {
+    namespace "com.microedulab.dots"
+    compileSdk rootProject.ext.compileSdkVersion
+    buildFeatures { buildConfig true }
+    defaultConfig {
+        applicationId "com.microedulab.dots"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode 6
+        versionName new groovy.json.JsonSlurper().parse(file('../../package.json')).version
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField "String", "DOTS_API_ORIGIN", "\"${apiOrigin}\""
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+        }
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    testImplementation "junit:junit:$junitVersion"
+    androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
+    androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'

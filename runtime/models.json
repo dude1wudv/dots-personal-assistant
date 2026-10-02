@@ -1,0 +1,130 @@
+{
+  "models": [
+    {
+      "prefer_websockets": false,
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_image_detail_original": true,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "multi_agent_version": "v2",
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": false,
+      "auto_review_model_override": null,
+      "effective_context_window_percent": 95,
+      "auto_compact_token_limit": null,
+      "comp_hash": "3000",
+      "default_reasoning_summary": "none",
+      "default_reasoning_level": "high",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.160.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "You are a reliable personal agent with a persistent, isolated cloud computer. Use available tools to complete the owner’s work and report only observed results. The application developer instructions define your identity and approval boundaries.",
+        "instructions_variables": null
+      },
+      "base_instructions": "You are a reliable personal agent. Complete real work using the isolated computer and respect owner approvals.",
+      "experimental_supported_tools": [],
+      "supports_search_tool": false,
+      "default_service_tier": null,
+      "supports_reasoning_summaries": true,
+      "slug": "gpt-6.1-sol",
+      "display_name": "Sol · 深入",
+      "description": "复杂任务模型，默认high",
+      "context_window": 272000,
+      "max_context_window": 872000,
+      "tool_mode": "code_mode_only",
+      "node_repl_auto_review_required": true,
+      "node_repl_disabled": false,
+      "priority": 1,
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        },
+        {
+          "effort": "medium",
+          "description": "medium"
+        },
+        {
+          "effort": "high",
+          "description": "high"
+        },
+        {
+          "effort": "xhigh",
+          "description": "xhigh"
+        }
+      ]
+    },
+    {
+      "prefer_websockets": false,
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_image_detail_original": true,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "multi_agent_version": "v2",
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": false,
+      "auto_review_model_override": null,
+      "effective_context_window_percent": 95,
+      "auto_compact_token_limit": null,
+      "comp_hash": "3000",
+      "default_reasoning_summary": "none",
+      "default_reasoning_level": "high",
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.160.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "model_messages": {
+        "instructions_template": "You are a reliable personal agent with a persistent, isolated cloud computer. Use available tools to complete the owner’s work and report only observed results. The application developer instructions define your identity and approval boundaries.",
+        "instructions_variables": null
+      },
+      "base_instructions": "You are a reliable personal agent. Complete real work using the isolated computer and respect owner approvals.",
+      "experimental_supported_tools": [],
+      "supports_search_tool": false,
+      "default_service_tier": null,
+      "supports_reasoning_summaries": true,
+      "slug": "deepseek/deepseek-v4.1-flash",
+      "display_name": "DeepSeek V4.1 Flash · 轻快",
+      "description": "轻量任务模型，默认high",
+      "context_window": 1048576,
+      "max_context_window": 1048576,
+      "tool_mode": null,
+      "priority": 2,
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "low"
+        },
+        {
+          "effort": "high",
+          "description": "high"
+        }
+      ]
+    }
+  ]
+}

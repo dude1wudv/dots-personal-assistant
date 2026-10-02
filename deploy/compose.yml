@@ -1,0 +1,90 @@
+name: dots
+services:
+  api:
+    image: dots-api:${DOTS_SHA:?fixed commit required}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.api
+    restart: unless-stopped
+    user: '10001:10001'
+    ports: ['127.0.0.1:8091:8091']
+    env_file: /opt/dots/secrets/runtime.env
+    environment:
+      DOTS_STATE: /state
+      RUNTIME_URL: http://runtime:8092
+    volumes:
+      - /opt/dots/state:/state
+      - /opt/dots/secrets/owner.json:/secrets/owner.json:ro
+      - /opt/dots/secrets/model.json:/secrets/model.json:ro
+    networks: [control, upstream]
+    read_only: true
+    tmpfs: ['/tmp:size=64m,mode=1777']
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+    cpus: 0.75
+    pids_limit: 128
+    logging: {driver: json-file, options: {max-size: 5m, max-file: '2'}}
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+  runtime:
+    image: dots-runtime:${DOTS_SHA:?fixed commit required}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.runtime
+    restart: unless-stopped
+    user: '0:0'
+    env_file: /opt/dots/secrets/runtime.env
+    environment:
+      HTTP_PROXY: http://egress:3128
+      HTTPS_PROXY: http://egress:3128
+      http_proxy: http://egress:3128
+      https_proxy: http://egress:3128
+      NO_PROXY: localhost,127.0.0.1,api,runtime
+      no_proxy: localhost,127.0.0.1,api,runtime
+      BROWSER_PROXY: http://egress:3128
+      BROWSER_PROFILE: /browser
+    volumes:
+      - /opt/dots/computer/workspace:/workspace
+      - /opt/dots/computer/home:/home/dot
+      - /opt/dots/computer/browser:/browser
+    networks: [control]
+    read_only: true
+    tmpfs: ['/tmp:size=256m,mode=1777']
+    shm_size: 256m
+    cap_drop: [ALL]
+    cap_add: [SETUID, SETGID]
+    security_opt: ['no-new-privileges:true', 'seccomp=./seccomp.json', 'apparmor=unconfined']
+    mem_limit: 2g
+    cpus: 1.5
+    pids_limit: 384
+    logging: {driver: json-file, options: {max-size: 5m, max-file: '2'}}
+    healthcheck:
+      test: ['CMD', 'python', '-c', "import urllib.request,json; assert json.load(urllib.request.urlopen('http://127.0.0.1:8092/health',timeout=4))['ok']"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+  egress:
+    image: dots-egress:${DOTS_SHA:?fixed commit required}
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.egress
+    restart: unless-stopped
+    volumes: ['./squid.conf:/etc/squid/squid.conf:ro']
+    networks: [control, internet]
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    logging: {driver: json-file, options: {max-size: 2m, max-file: '2'}}
+networks:
+  control:
+    internal: true
+  internet: {}
+  upstream:
+    external: true
+    name: ${DOTS_UPSTREAM_NETWORK:-dots-upstream}

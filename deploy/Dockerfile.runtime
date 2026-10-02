@@ -1,0 +1,16 @@
+FROM node:24-bookworm-slim AS codex
+RUN npm install -g @openai/codex@0.160.0
+
+FROM python:3.12-bookworm
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+RUN apt-get update && apt-get install -y --no-install-recommends git tini curl ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=codex /usr/local/lib/node_modules /usr/local/lib/node_modules
+COPY --from=codex /usr/local/bin/node /usr/local/bin/node
+RUN ln -s /usr/local/lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex
+WORKDIR /opt/dots
+COPY runtime/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && playwright install --with-deps chromium && useradd -u 10002 -m computer && useradd -u 10003 -m dot
+COPY runtime ./
+ENV HOME=/home/dot CODEX_HOME=/home/dot/.codex PYTHONUNBUFFERED=1 WORKSPACE=/workspace
+ENTRYPOINT ["tini", "--"]
+CMD ["python", "/opt/dots/start.py"]

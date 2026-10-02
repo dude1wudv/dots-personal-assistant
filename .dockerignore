@@ -1,0 +1,16 @@
+node_modules
+android
+.git
+.venv
+__pycache__
+.pytest_cache
+state
+secrets
+secret.md
+*.apk
+*.jks
+*.keystore
+.env
+.env.*
+dist
+tests

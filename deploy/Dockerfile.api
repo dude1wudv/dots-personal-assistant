@@ -1,0 +1,20 @@
+FROM node:24-bookworm-slim AS web
+WORKDIR /app
+RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
+COPY package.json pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
+COPY index.html tsconfig.json vite.config.ts capacitor.config.ts ./
+COPY src ./src
+COPY public ./public
+RUN pnpm build
+
+FROM python:3.12-slim-bookworm
+WORKDIR /opt/dots
+COPY server/requirements.txt ./requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && useradd -u 10001 -m dot
+COPY server ./server
+COPY --from=web /app/dist ./public
+USER 10001:10001
+ENV PYTHONUNBUFFERED=1 DOTS_STATE=/state DOTS_PUBLIC=/opt/dots/public
+EXPOSE 8091
+CMD ["uvicorn", "server.app:app", "--host", "0.0.0.0", "--port", "8091", "--no-access-log", "--no-proxy-headers"]
