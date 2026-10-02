@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Check, ChevronRight, Download, FileInput, Pencil, Plus, Search, Share2, Users } from 'lucide-react'
+import { Check, ChevronRight, Download, FileInput, Menu, MoreHorizontal, Pencil, Plus, Search, Share2, Users } from 'lucide-react'
 import { z } from 'zod'
 import { api, isNative, native, post } from './api'
 import { BotSchema, BotTemplateSchema, ConversationSchema, type Bot, type Conversation } from './protocol'
@@ -7,17 +7,20 @@ import { Modal } from './Controls'
 import { Mascot } from './Mascot'
 
 const COLORS: { value: Bot['color']; label: string }[] = [{ value: 'sage', label: '苔绿' }, { value: 'blue', label: '雾蓝' }, { value: 'rose', label: '蔷薇' }, { value: 'violet', label: '浅紫' }, { value: 'amber', label: '暖杏' }]
+const HOME_STATUS: Record<string, string> = { waiting: '等待你的授权', running: '正在工作', failed: '任务遇到问题', interrupted: '任务已中断' }
 export function BotAvatar({ color = 'sage' }: { color?: string }) {
   return <span className={`bot-avatar tone-${color}`}><Mascot/></span>
 }
 
-export function Companions({ bots, onRefresh, onChat, onGroup, onError, initialBot }: { bots: Bot[]; onRefresh: () => Promise<void>; onChat: (bot: Bot) => void; onGroup: (group: Conversation) => void; onError: (message: string) => void; initialBot?: Bot }) {
+export function Companions({ bots, conversations, onRefresh, onChat, onGroup, onOpen, onNavigation, onError, initialBot }: { bots: Bot[]; conversations: Conversation[]; onRefresh: () => Promise<void>; onChat: (bot: Bot) => void; onGroup: (group: Conversation) => void; onOpen: (conversation: Conversation) => void; onNavigation: () => void; onError: (message: string) => void; initialBot?: Bot }) {
   const [editing, setEditing] = useState<Bot | 'new' | null>(initialBot || null)
   const [name, setName] = useState(initialBot?.name || ''), [role, setRole] = useState(initialBot?.role || '你的私人工作伙伴'), [memory, setMemory] = useState(initialBot?.memory || ''), [color, setColor] = useState<Bot['color']>(initialBot?.color || 'sage')
   const [grouping, setGrouping] = useState(false), [members, setMembers] = useState<string[]>([]), [title, setTitle] = useState(''), [query, setQuery] = useState('')
   const [template, setTemplate] = useState<string | null>(null), [importing, setImporting] = useState(false), [busy, setBusy] = useState(false)
+  const [creating, setCreating] = useState(false), [searching, setSearching] = useState(false), [actions, setActions] = useState<Bot | null>(null)
   const file = useRef<HTMLInputElement>(null)
   const visible = bots.filter(b => b.name.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
+  const groups = conversations.filter(c => c.members && c.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   function edit(bot: Bot | 'new') { setEditing(bot); setName(bot === 'new' ? '' : bot.name); setRole(bot === 'new' ? '你的私人工作伙伴' : bot.role); setMemory(bot === 'new' ? '' : bot.memory); setColor(bot === 'new' ? 'sage' : bot.color) }
   async function save() {
     setBusy(true)
@@ -54,15 +57,35 @@ export function Companions({ bots, onRefresh, onChat, onGroup, onError, initialB
       }
     } catch (e) { onError(e instanceof z.ZodError || e instanceof SyntaxError ? '模板格式无效，只接受名称、指令和配色' : (e as Error).message) } finally { setBusy(false) }
   }
-  return <section className="companions-page page-scroll">
-    <div className="companion-actions"><button onClick={() => edit('new')}><Plus size={20}/>新建 Bot</button><button onClick={() => { setGrouping(true); setMembers([]); setTitle(''); setQuery('') }}><Users size={20}/>新建群聊</button><button onClick={() => { setImporting(true); setTemplate('') }}><FileInput size={20}/>导入模板</button></div>
-    <div className="search-box"><Search size={18}/><input aria-label="搜索伙伴" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索伙伴"/></div>
-    <div className="bot-list">{visible.map(bot => <article className="bot-card" key={bot.id}>
-      <button className="bot-chat" onClick={() => onChat(bot)}><BotAvatar color={bot.color}/><span><strong>{bot.name}</strong><small>{bot.role}</small></span><ChevronRight size={18}/></button>
-      <div className="bot-card-actions"><button onClick={() => edit(bot)} aria-label={`编辑${bot.name}`}><Pencil size={15}/>指令与记忆</button><button onClick={() => preview(bot)} aria-label={`导出${bot.name}模板`}><Share2 size={15}/>模板</button></div>
-    </article>)}</div>
-    {!visible.length && <p className="search-empty">没有找到伙伴</p>}
-    <p className="companion-note">伙伴拥有独立指令、记忆与对话；共用你的私人云电脑。群聊共享本群消息，逐位回复，关键动作仍需授权。</p>
+  return <section className="companions-home">
+    <header className="home-topbar">
+      <button className="icon-button home-circle" aria-label="打开导航" onClick={onNavigation}><Menu size={22}/></button>
+      <span className="home-title">绒点</span>
+      <button className="icon-button home-circle" aria-label="搜索伙伴与群聊" aria-expanded={searching} onClick={() => { setSearching(!searching); setQuery('') }}><Search size={22}/></button>
+      <button className="icon-button home-circle" aria-label="创建伙伴或群聊" aria-haspopup="dialog" aria-expanded={creating} onClick={() => setCreating(true)}><Plus size={26}/></button>
+    </header>
+    <div className="companions-page page-scroll">
+      {searching ? <div className="search-box"><Search size={18}/><input autoFocus aria-label="搜索伙伴与群聊" value={query} onChange={e => setQuery(e.target.value)} placeholder="搜索伙伴与群聊"/></div> : <div className="home-welcome"><Mascot/><h1>你的伙伴们</h1><p>选一位继续，或一起开始新的事情</p></div>}
+      <div className="bot-list">
+        {groups.map(group => <button className="bot-chat group-chat" key={group.id} onClick={() => onOpen(group)}><span className="home-group-avatar"><Users size={29}/></span><span><strong>{group.title}</strong><small>{HOME_STATUS[group.status] || group.members!.map(m => m.name).join('、')}</small></span><ChevronRight size={18}/></button>)}
+        {visible.map(bot => { const latest = conversations.find(c => !c.members && c.bot_id === bot.id); return <article className="bot-card" key={bot.id}>
+          <button className="bot-chat" onClick={() => latest ? onOpen(latest) : onChat(bot)}><BotAvatar color={bot.color}/><span><strong>{bot.name}</strong><small>{HOME_STATUS[latest?.status || ''] || latest?.title || bot.role}</small></span></button>
+          <button className="icon-button bot-more" aria-label={`${bot.name}的选项`} onClick={() => setActions(bot)}><MoreHorizontal size={20}/></button>
+        </article> })}
+      </div>
+      {!visible.length && !groups.length && <p className="search-empty">{query ? '没有找到伙伴或群聊' : '点右上角 ＋，创建第一位伙伴'}</p>}
+      <p className="companion-note">私有伙伴 · 独立记忆 · 关键动作先授权</p>
+    </div>
+    {creating && <Modal title="创建" className="home-create-menu" onClose={() => setCreating(false)}><div className="home-menu-options">
+      <button onClick={() => { setCreating(false); edit('new') }}><Plus size={21}/>新建 Bot</button>
+      <button onClick={() => { setCreating(false); setGrouping(true); setMembers([]); setTitle(''); setQuery('') }}><Users size={21}/>新建群聊</button>
+      <button onClick={() => { setCreating(false); setImporting(true); setTemplate('') }}><FileInput size={21}/>导入模板</button>
+    </div></Modal>}
+    {actions && <Modal title={actions.name} onClose={() => setActions(null)}><div className="home-menu-options">
+      <button onClick={() => { onChat(actions); setActions(null) }}><Plus size={20}/>开始新对话</button>
+      <button onClick={() => { edit(actions); setActions(null) }}><Pencil size={20}/>指令与记忆</button>
+      <button onClick={() => { preview(actions); setActions(null) }}><Share2 size={20}/>导出模板</button>
+    </div></Modal>}
     {editing && <Modal title={editing === 'new' ? '创建新 Bot' : '伙伴设置'} onClose={() => { if (!busy) setEditing(null) }} className="bot-editor">
       <div className="bot-preview"><BotAvatar color={color}/></div>
       <label>名字<input aria-label="Bot 名字" maxLength={30} value={name} onChange={e => setName(e.target.value)} placeholder="为伙伴取个名字"/></label>

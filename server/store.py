@@ -4,6 +4,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import questions, runs
+
 
 class Store:
     def __init__(self, path: str):
@@ -27,6 +29,10 @@ class Store:
             for table in ('conversations', 'routines'):
                 if 'bot_id' not in {row['name'] for row in db.execute(f'PRAGMA table_info({table})')}:
                     db.execute(f"ALTER TABLE {table} ADD COLUMN bot_id TEXT NOT NULL DEFAULT 'default'")
+        with self.connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            questions.migrate(db)
+            runs.migrate(db)
 
     @contextmanager
     def connect(self):

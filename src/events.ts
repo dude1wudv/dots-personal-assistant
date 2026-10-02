@@ -1,6 +1,6 @@
-import type { CodexItem, DotEvent } from './protocol'
+import type { CodexItem, DotEvent, QuestionContent } from './protocol'
 export type { DotEvent } from './protocol'
-export interface ChatItem { id: string; role: 'user' | 'assistant' | 'activity'; text: string; type: string; created: number; status?: string; speaker?: { id: string; name: string; color: string }; data?: Partial<CodexItem> & { attachments?: string[] } }
+export interface ChatItem { id: string; role: 'user' | 'assistant' | 'activity'; text: string; type: string; created: number; status?: string; speaker?: { id: string; name: string; color: string }; data?: Partial<CodexItem> & { attachments?: string[]; question?: QuestionContent & { id: string; answer?: string; status?: string } } }
 export function reduceEvents(events: DotEvent[]): ChatItem[] {
   const items = new Map<string, ChatItem>()
   const order: string[] = []
@@ -11,6 +11,11 @@ export function reduceEvents(events: DotEvent[]): ChatItem[] {
     speaker = p.speaker
     if (event.kind === 'dots/user/message') {
       put({ id: `user-${event.id}`, role: 'user', text: p.text || '', type: 'message', created: event.created, data: { attachments: p.attachments } })
+    } else if (event.kind === 'dots/question/asked' && p.question_id && p.question && p.options) {
+      put({ id: p.question_id, role: 'assistant', text: p.question, type: 'question', created: event.created, data: { question: { id: p.question_id, question: p.question, options: p.options } } })
+    } else if (event.kind === 'dots/question/answered' && p.question_id) {
+      const previous = items.get(p.question_id)
+      if (previous?.data?.question) put({ ...previous, data: { ...previous.data, question: { ...previous.data.question, status: p.status, answer: p.text || undefined } } })
     } else if (event.kind === 'item/agentMessage/delta') {
       const id = p.itemId
       if (!id) continue
@@ -36,7 +41,7 @@ export function reduceEvents(events: DotEvent[]): ChatItem[] {
 }
 
 export interface WorkProgress { text: string; mode: 'thinking' | 'working' }
-const TOOL_LABELS: Record<string, string> = { browser: '使用浏览器', terminal: '使用终端', shell: '使用终端', read_file: '读取文件', write_file: '更新文件', schedule: '安排例行任务', remember: '更新记忆' }
+const TOOL_LABELS: Record<string, string> = { browser: '使用浏览器', terminal: '使用终端', shell: '使用终端', read_file: '读取文件', write_file: '更新文件', schedule: '安排例行任务', remember: '更新记忆', ask_choice: '等待你选择' }
 function toolLabel(item: CodexItem): string | null {
   if (item.type === 'commandExecution') return '使用终端'
   if (item.type === 'fileChange') return '更新文件'

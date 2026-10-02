@@ -104,8 +104,10 @@ def context(store, group_id):
     lines = []
     for row in reversed(rows):
         p = json.loads(row['payload'])
-        if row['kind'] == 'dots/user/message' and row['thread_id'] == group_id:
+        if row['kind'] == 'dots/user/message' and (row['thread_id'] == group_id or p.get('question_id')):
             lines.append('主人: ' + p.get('text', '')[:4000])
+        elif row['kind'] == 'dots/question/asked':
+            lines.append(speakers.get(row['thread_id'], '伙伴') + ': ' + p.get('question', '')[:500])
         elif row['kind'] == 'item/completed' and p.get('item', {}).get('type') == 'agentMessage':
             lines.append(speakers.get(row['thread_id'], '伙伴') + ': ' + p['item'].get('text', '')[:4000])
     return '\n'.join(lines)[-16000:]

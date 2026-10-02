@@ -56,7 +56,7 @@ export function Profile({ me, onUpdate, onError, onLogout, onBack, onNavigation,
     try { await native.background({ enabled: !background }); localStorage.setItem('dots-background', String(!background)); setBackground(!background) } catch (e) { onError(e instanceof Error ? e.message : '后台提醒设置失败') } finally { setBusy(false) }
   }
   return <section className="settings-screen">
-    <header className="page-topbar settings-topbar"><button className="icon-button" aria-label={section === 'main' ? '返回对话' : '返回设置'} onClick={() => section === 'main' ? onBack() : setSection('main')}><ArrowLeft size={22}/></button><span>{section === 'devices' ? '设备与通知' : section === 'tools' ? '工具与技能' : '设置'}</span><button className="icon-button" aria-label="打开导航" onClick={onNavigation}><Menu size={22}/></button></header>
+    <header className="page-topbar settings-topbar"><button className="icon-button" aria-label={section === 'main' ? '返回伙伴首页' : '返回设置'} onClick={() => section === 'main' ? onBack() : setSection('main')}><ArrowLeft size={22}/></button><span>{section === 'devices' ? '设备与通知' : section === 'tools' ? '工具与技能' : '设置'}</span><button className="icon-button" aria-label="打开导航" onClick={onNavigation}><Menu size={22}/></button></header>
     <div className="page-scroll profile-page">
       {section === 'main' && <>
         <h2 className="settings-label">绒绒</h2>

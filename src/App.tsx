@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { App as CapacitorApp } from '@capacitor/app'
-import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock3, FileText, FolderOpen, ImagePlus, Loader2, Menu, Mic, Monitor, PanelRight, Paperclip, Phone, PhoneOff, Plus, Search, Settings2, ShieldCheck, Sparkles, Square, X, Camera, MessageCircle } from 'lucide-react'
+import { Activity, ArrowLeft, ArrowUp, Check, ChevronDown, ChevronRight, Clock3, FileText, FolderOpen, ImagePlus, Loader2, Menu, Mic, Monitor, Paperclip, Phone, PhoneOff, Plus, Search, Settings2, ShieldCheck, Sparkles, Square, X, Camera, MessageCircle } from 'lucide-react'
 import { api, clearToken, isNative, native, post, restoreToken, saveToken } from './api'
 import { getWorkProgress, reduceEvents, type ChatItem, type DotEvent } from './events'
 import { Workspace } from './Workspace'
@@ -8,10 +8,12 @@ import { Routines } from './Routines'
 import { Profile } from './Profile'
 import { Choice, Modal, Notice } from './Controls'
 import { z } from 'zod'
-import { ApprovalSchema, AttachmentSchema, BotSchema, ConversationSchema, DotEventSchema, LoginSchema, MeSchema, type Answers, type Approval, type Bot, type Conversation, type Me } from './protocol'
+import { ApprovalSchema, AttachmentSchema, BotSchema, ConversationSchema, DotEventSchema, LoginSchema, MeSchema, QuestionSchema, type Answers, type Approval, type Bot, type Conversation, type Me, type Question } from './protocol'
 import { Mascot } from './Mascot'
 import { BotAvatar, Companions } from './Companions'
 import { ChatMessage } from './ChatMessage'
+import { QuestionCard } from './QuestionCard'
+import { Runs } from './Runs'
 
 const MODEL_NAMES: Record<string, string> = { 'gpt-6.1-sol': 'Sol · 深入', 'deepseek/deepseek-v4.1-flash': 'DeepSeek · 轻快' }
 const STATUS: Record<string, string> = { idle: '随时在这里', running: '正在认真工作', waiting: '等你授权', failed: '任务遇到问题', interrupted: '任务已暂停' }
@@ -75,7 +77,7 @@ function MessageItem({ item, onError, animate, onGrowth }: { item: ChatItem; onE
 export default function App() {
   const [ready, setReady] = useState(false), [loggedIn, setLoggedIn] = useState(false), [me, setMe] = useState<Me | null>(null)
   const [conversations, setConversations] = useState<Conversation[]>([]), [current, setCurrent] = useState<string | null>(null), [events, setEvents] = useState<DotEvent[]>([]), [approvals, setApprovals] = useState<Approval[]>([])
-  const [tab, setTab] = useState<'chat' | 'workspace' | 'routines' | 'profile' | 'companions'>('chat'), [sidebar, setSidebar] = useState(false), [detail, setDetail] = useState(false)
+  const [tab, setTab] = useState<'chat' | 'workspace' | 'routines' | 'profile' | 'companions' | 'activity'>('companions'), [sidebar, setSidebar] = useState(false), [detail, setDetail] = useState(false)
   const [text, setText] = useState(''), [model, setModel] = useState('gpt-6.1-sol'), [effort, setEffort] = useState('high'), [attachments, setAttachments] = useState<{ path: string; name: string }[]>([])
   const [sending, setSending] = useState(false), [menu, setMenu] = useState(false), [toast, setToast] = useState(''), [connected, setConnected] = useState(true), [search, setSearch] = useState('')
   const [voiceMode, setVoiceMode] = useState(false), [listening, setListening] = useState(false), [speaking, setSpeaking] = useState(false)
@@ -83,6 +85,8 @@ export default function App() {
   const [searchMode, setSearchMode] = useState(false), [loadedThread, setLoadedThread] = useState<string | null>(null)
   const [bots, setBots] = useState<Bot[]>([]), [selectedBot, setSelectedBot] = useState('default'), [botSettings, setBotSettings] = useState<Bot | undefined>()
   const [outbox, setOutbox] = useState<{ id: string; threadId: string | null; text: string; attachments: { path: string; name: string }[]; state: 'sending' | 'sent' | 'failed'; created: number }[]>([])
+  const [questions, setQuestions] = useState<Question[]>([])
+  const [modelSettings, setModelSettings] = useState(false)
   const openedAt = useRef(Date.now()/1000)
   const scrollRef = useRef<HTMLDivElement>(null), bottomRef = useRef<HTMLDivElement>(null), inputRef = useRef<HTMLTextAreaElement>(null), fileRef = useRef<HTMLInputElement>(null), imageRef = useRef<HTMLInputElement>(null), cameraRef = useRef<HTMLInputElement>(null)
   const cursor = useRef(0), nearBottom = useRef(true), voiceRef = useRef(false), lastSpoken = useRef('')
@@ -94,6 +98,7 @@ export default function App() {
   const chatItems = useMemo(() => reduceEvents(visibleEvents), [visibleEvents])
   const progress = useMemo(() => getWorkProgress(visibleEvents, conversation?.model === 'gpt-6.1-sol'), [visibleEvents, conversation?.model])
   const relevantApprovals = approvals.filter(a => !a.thread_id || a.thread_id === current || conversation?.members?.some(m => m.thread_id === a.thread_id))
+  const awaitingQuestion = questions.find(q => q.thread_id === current || conversation?.members?.some(m => m.thread_id === q.thread_id))
   const notify = useCallback((message: string) => setToast(message), [])
   const pendingMessages = outbox.filter(p => p.threadId === current && !visibleEvents.some(e => e.payload.client_id === p.id))
   const followReply = useCallback(() => { if (nearBottom.current && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight }, [])
@@ -128,17 +133,12 @@ export default function App() {
     if (!loggedIn) return
     api('/api/me', MeSchema).then(setMe).catch(e => notify(e.message))
     if (isNative && localStorage.getItem('dots-background') === 'true') native.background({ enabled: true }).catch(e => notify(e.message))
-    let disposed = false, timer: number, initial = true
+    let disposed = false, timer: number
     async function refresh() {
       try {
-        const [list, pending] = await Promise.all([api('/api/conversations', z.array(ConversationSchema)), api('/api/approvals', z.array(ApprovalSchema))])
+        const [list, pending, asking] = await Promise.all([api('/api/conversations', z.array(ConversationSchema)), api('/api/approvals', z.array(ApprovalSchema)), api('/api/questions', z.array(QuestionSchema))])
         if (!disposed) {
-          setConversations(list); setApprovals(pending); setConnected(true)
-          if (initial) {
-            const active = list.find(c => c.status === 'waiting') || list.find(c => c.status === 'running')
-            if (active) { setCurrent(active.id); setModel(active.model); setEffort(active.effort) }
-            initial = false
-          }
+          setConversations(list); setApprovals(pending); setQuestions(asking); setConnected(true)
         }
       } catch { if (!disposed) setConnected(false) }
       if (!disposed) timer = window.setTimeout(refresh, document.hidden ? 10000 : 2000)
@@ -169,12 +169,12 @@ export default function App() {
       if (!window.dispatchEvent(new Event('dots-dismiss-overlay', { cancelable: true }))) return
       if (voiceRef.current) setVoiceMode(false)
       else if (sidebar) setSidebar(false)
-      else if (tab !== 'chat') setTab('chat')
-      else if (current) setCurrent(null)
+      else if (detail) setDetail(false)
+      else if (tab !== 'companions') { setBotSettings(undefined); setTab('companions') }
       else CapacitorApp.minimizeApp()
     })
     return () => { listener.then(l => l.remove()) }
-  }, [tab, sidebar, current])
+  }, [tab, sidebar, detail])
 
   async function create(value: string) {
     const c = await post('/api/conversations', { title: value.trim().slice(0, 28) || '新对话', model, bot_id: selectedBot }, ConversationSchema)
@@ -182,6 +182,7 @@ export default function App() {
   }
   async function send(value = text) {
     if (!value.trim() || sending) return
+    if (awaitingQuestion && attachments.length) { notify('请先回答选项问题，再发送附件'); return }
     const clientId = crypto.randomUUID(), draft = value.trim(), files = attachments
     setSending(true); nearBottom.current = true
     setOutbox(list => [...list, { id: clientId, threadId: current, text: draft, attachments: files, state: 'sending', created: Date.now()/1000 }])
@@ -190,7 +191,10 @@ export default function App() {
     try {
       const id = current || await create(draft)
       setOutbox(list => list.map(p => p.id === clientId ? { ...p, threadId: id } : p))
-      await post(`/api/conversations/${id}/message`, { text: draft, model, effort, attachments: files.map(a => a.path), client_id: clientId })
+      if (awaitingQuestion) {
+        await post(`/api/questions/${awaitingQuestion.id}/answer`, { text: draft, client_id: clientId })
+        setQuestions(list => list.filter(q => q.id !== awaitingQuestion.id))
+      } else await post(`/api/conversations/${id}/message`, { text: draft, model, effort, attachments: files.map(a => a.path), client_id: clientId })
       setOutbox(list => list.map(p => p.id === clientId ? { ...p, state: 'sent' } : p))
     } catch (e) {
       setOutbox(list => list.map(p => p.id === clientId ? { ...p, state: 'failed' } : p))
@@ -199,6 +203,12 @@ export default function App() {
   }
   async function resolve(id: string, decision: string, answers: Answers = {}) {
     try { await post('/api/approvals/' + encodeURIComponent(id), { decision, answers }); setApprovals(list => list.filter(a => a.id !== id)) } catch (e) { notify((e as Error).message); throw e }
+  }
+  async function answerQuestion(id: string, body: { option?: number; skip?: boolean }) {
+    try {
+      await post(`/api/questions/${id}/answer`, body)
+      setQuestions(list => list.filter(q => q.id !== id)); nearBottom.current = true
+    } catch (e) { notify((e as Error).message); throw e }
   }
   async function upload(file: File | undefined) {
     setMenu(false); if (!file) return
@@ -231,19 +241,21 @@ export default function App() {
   const name = conversation?.members ? conversation.title : activeBot?.name || me?.profile.name || '绒绒'
   const active = conversation && ['running', 'waiting'].includes(conversation.status)
   const waiting = conversation?.status === 'waiting' || relevantApprovals.length > 0
-  const progressText = !connected ? '网络断开 · 重连中' : waiting ? '等待你的授权' : conversation?.status === 'running' ? progress?.text || '正在思考' : sending ? '正在发送' : STATUS[conversation?.status || 'idle'] || '随时在这里'
+  const progressText = !connected ? '网络断开 · 重连中' : awaitingQuestion ? '等你选择 · 也可以打字回答' : waiting ? '等待你的授权' : conversation?.status === 'running' ? progress?.text || '正在思考' : sending ? '正在发送' : STATUS[conversation?.status || 'idle'] || '随时在这里'
   const mascotState = speaking ? 'speaking' : listening ? 'listening' : !connected ? 'offline' : waiting ? 'waiting' : active || sending ? progress?.mode || 'thinking' : 'idle'
+  const showProgress = showWorkStatus && (active || sending || !connected || waiting)
   const openTab = (next: typeof tab) => { setTab(next); setSidebar(false); setDetail(false) }
+  const openHome = () => { setBotSettings(undefined); openTab('companions') }
+  const openConversation = (c: Conversation) => { setCurrent(c.id); setSelectedBot(c.bot_id); setModel(c.model); setEffort(c.effort); setText(''); setAttachments([]); openTab('chat'); nearBottom.current = true }
+  const openRunConversation = (threadId: string) => { const target = conversations.find(c => c.id === threadId); if (target) openConversation(target); else notify('这次运行没有可回溯的对话') }
   const chat = <section className="chat-column">
-    <header className={`topbar ${showWorkStatus ? 'with-progress' : ''}`}>
-      <button className="icon-button navigation-button" aria-label="打开导航" onClick={() => setSidebar(true)}><Menu size={21}/></button>
-      <button className={`topbar-companion tone-${activeBot?.color || 'sage'}`} aria-label="伙伴设置" onClick={() => { if (conversation?.members) setDetail(true); else { setBotSettings(activeBot); openTab('companions') } }}><Mascot state={mascotState}/><strong>{name}</strong></button>
+    <header className={`topbar ${showProgress ? 'with-progress' : ''}`}>
+      <button className="icon-button navigation-button" aria-label="返回伙伴首页" onClick={openHome}><ArrowLeft size={21}/></button>
+      <button className={`topbar-companion tone-${activeBot?.color || 'sage'}`} aria-label="伙伴与任务" onClick={() => setDetail(true)}><Mascot state={mascotState}/><strong>{name}</strong></button>
       <div className="topbar-actions">
         <button className={`icon-button ${tab === 'workspace' ? 'pressed' : ''}`} aria-label={tab === 'workspace' ? '返回对话' : '打开云电脑'} onClick={() => openTab(tab === 'workspace' ? 'chat' : 'workspace')}><Monitor size={19}/></button>
-        <button className="icon-button" aria-label="语音聊天" onClick={() => setVoiceMode(true)}><Phone size={19}/></button>
-        <button className="icon-button detail-button" aria-label="任务与资料" onClick={() => setDetail(!detail)}><PanelRight size={19}/></button>
       </div>
-      {showWorkStatus && <div className="companion-progress" data-state={mascotState} role="status"><span className="progress-dot"/><span title={progressText}>{progressText}</span></div>}
+      {showProgress && <div className="companion-progress" data-state={mascotState} role="status"><span className="progress-dot"/><span title={progressText}>{progressText}</span></div>}
     </header>
     <div className="chat-scroll" ref={scrollRef} onScroll={e => { const el = e.currentTarget; nearBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 150 }}>
       {current && loadedThread !== current && !pendingMessages.length ? <div className="history-loading" role="status"><Loader2 size={16} className="spin"/>{connected ? '加载对话' : '重连后加载对话'}</div> : !chatItems.length && !pendingMessages.length && !active && !sending ? <section className="welcome">
@@ -257,69 +269,73 @@ export default function App() {
         ].map(s => <button key={s.title} onClick={() => { setText(s.text); inputRef.current?.focus() }}>{s.icon}<span>{s.title}</span><ArrowUp size={15}/></button>)}</div>
       </section> : <div className="messages">
         <div className="conversation-date">{new Date((conversation?.updated || Date.now()/1000) * 1000).toLocaleDateString('zh-CN', { month: 'long', day: 'numeric' })}</div>
-        {chatItems.map(item => <div key={item.id} className="chat-entry">{item.speaker && item.role === 'assistant' && <div className="message-speaker"><BotAvatar color={item.speaker.color}/><span>{item.speaker.name}</span></div>}<MessageItem item={item} onError={notify} animate={item.created >= openedAt.current} onGrowth={followReply}/></div>)}
+        {chatItems.map(item => <div key={item.id} className="chat-entry">{item.speaker && item.role === 'assistant' && <div className="message-speaker"><BotAvatar color={item.speaker.color}/><span>{item.speaker.name}</span></div>}{item.data?.question ? <QuestionCard question={item.data.question} pending={questions.some(q => q.id === item.id)} onAnswer={answerQuestion} onType={() => inputRef.current?.focus()}/> : <MessageItem item={item} onError={notify} animate={item.created >= openedAt.current} onGrowth={followReply}/>}</div>)}
         {pendingMessages.map(p => <div key={p.id} className="pending-message"><ChatMessage item={{ id: p.id, role: 'user', text: p.text, type: 'message', created: p.created, data: { attachments: p.attachments.map(a => a.path) } }} onError={notify}/><div className={`send-status ${p.state}`} role="status">{p.state === 'sending' ? '正在发送…' : p.state === 'sent' ? '已提交 · 同步中' : '发送未确认 · 请先检查对话，避免重复发送'}{p.state === 'failed' && <button onClick={() => { setText(p.text); setAttachments(p.attachments); setOutbox(list => list.filter(v => v.id !== p.id)); inputRef.current?.focus() }}>恢复草稿</button>}</div></div>)}
       </div>}
       <div className="approval-list">{relevantApprovals.map(a => <div key={a.id}>{conversation?.members && <p className="approval-speaker">{conversation.members.find(m => m.thread_id === a.thread_id)?.name || '伙伴'} 请求授权</p>}<ApprovalCard approval={a} resolve={resolve}/></div>)}</div>
-      {active && <div className="typing-indicator" role="status"><Mascot state={mascotState}/><span>{conversation?.members?.find(m => ['running', 'waiting'].includes(m.status))?.name} {waiting ? '等待你的授权' : showWorkStatus ? progressText : `${name}正在工作`}</span></div>}
+      {active && !awaitingQuestion && <div className="typing-indicator" role="status"><Mascot state={mascotState}/><span>{conversation?.members?.find(m => ['running', 'waiting'].includes(m.status))?.name} {waiting ? '等待你的授权' : showWorkStatus ? progressText : `${name}正在工作`}</span></div>}
       <div ref={bottomRef}/>
     </div>
     <div className="composer-area">
       <div className="composer-options">
-        <Choice compact label="选择模型" value={model} onChange={value => { setModel(value); setEffort('high') }} options={(me?.models || []).map(value => ({ value, label: MODEL_NAMES[value] || value, description: value.includes('deepseek') ? '轻快响应，适合日常任务' : '深入分析与复杂任务', icon: <Sparkles size={17}/> }))}/>
-        <Choice compact label="思考强度" value={effort} onChange={setEffort} options={(model.includes('deepseek') ? ['low','high'] : ['low','medium','high','xhigh']).map(value => ({ value, label: `思考 ${value}` }))}/>
+        <button className="model-summary" aria-label="模型与思考设置" onClick={() => setModelSettings(true)}><Sparkles size={15}/>{MODEL_NAMES[model] || model}<ChevronDown size={13}/></button>
         {active && <button className="stop-button" onClick={() => post(`/api/conversations/${current}/stop`).catch(e => notify(e.message))}><Square size={12}/>停止</button>}
       </div>
       {attachments.length > 0 && <div className="composer-attachments">{attachments.map(a => <span key={a.path}><Paperclip size={15}/><span>{a.name}</span><button className="icon-button" aria-label={`移除附件${a.name}`} onClick={() => setAttachments(list => list.filter(x => x.path !== a.path))}><X size={15}/></button></span>)}</div>}
       <div className="composer">
         <button className="icon-button" aria-label="添加附件" onClick={() => setMenu(true)}><Plus size={22}/></button>
-        <textarea ref={inputRef} rows={1} aria-label="消息内容" value={text} onChange={e => setText(e.target.value)} placeholder={`发消息给${name}`} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !isNative && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}/>
+        <textarea ref={inputRef} rows={1} aria-label="消息内容" value={text} onChange={e => setText(e.target.value)} placeholder={awaitingQuestion ? '直接输入你的答案…' : `发消息给${name}`} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && !isNative && !e.nativeEvent.isComposing) { e.preventDefault(); send() } }}/>
         <button className={`icon-button microphone ${listening ? 'recording' : ''}`} aria-label="语音输入" onClick={() => dictate()} disabled={listening}><Mic size={20}/></button>
         {text.trim() ? <button className="send-button" aria-label="发送消息" disabled={sending} onClick={() => send()}>{sending ? <Loader2 size={19} className="spin"/> : <ArrowUp size={22}/>}</button> : null}
       </div>
-      <p className="composer-footnote">关键操作先授权 · 结果请核对</p>
     </div>
   </section>
   return <div className="app-shell">
     <nav className="nav-rail" aria-label="主要导航">
-      <button className="rail-brand" aria-label="绒点首页" onClick={() => { setCurrent(null); openTab('chat') }}><span className="brand-dots"><i/><i/><i/></span></button>
+      <button className="rail-brand" aria-label="绒点首页" onClick={openHome}><span className="brand-dots"><i/><i/><i/></span></button>
       <button className={`icon-button ${tab === 'chat' ? 'selected' : ''}`} aria-label="对话记录" onClick={() => setSidebar(true)}><MessageCircle size={21}/></button>
-      <button className={`icon-button ${tab === 'companions' ? 'selected' : ''}`} aria-label="伙伴与群聊" onClick={() => { setBotSettings(undefined); openTab('companions') }}><Plus size={21}/></button>
+      <button className={`icon-button ${tab === 'companions' ? 'selected' : ''}`} aria-label="伙伴与群聊" onClick={openHome}><Sparkles size={21}/></button>
       <button className={`icon-button ${tab === 'workspace' ? 'selected' : ''}`} aria-label="工作空间" onClick={() => openTab('workspace')}><Monitor size={21}/></button>
       <button className={`icon-button ${tab === 'routines' ? 'selected' : ''}`} aria-label="例行任务" onClick={() => openTab('routines')}><Clock3 size={21}/></button>
+      <button className={`icon-button ${tab === 'activity' ? 'selected' : ''}`} aria-label="活动" onClick={() => openTab('activity')}><Activity size={21}/></button>
       <button className="icon-button rail-settings" aria-label="设置" onClick={() => openTab('profile')}><Settings2 size={21}/></button>
     </nav>
     {sidebar && <button aria-label="关闭导航" className="sidebar-scrim" onClick={() => setSidebar(false)}/>}
     <aside className={`sidebar ${sidebar ? 'open' : ''} ${searchMode ? 'searching' : ''}`} aria-hidden={!sidebar} hidden={!sidebar}>
       <div className="sidebar-top">{searchMode && <button className="icon-button" aria-label="返回导航" onClick={() => { searchRef.current?.blur(); setSearchMode(false); setSearch('') }}><ArrowLeft size={20}/></button>}<span className="wordmark">{searchMode ? '搜索对话' : '绒点'}</span><button className="icon-button" aria-label="关闭导航面板" onClick={() => setSidebar(false)}><X size={20}/></button></div>
       <button className="new-conversation" onClick={() => { setCurrent(null); setText(''); openTab('chat') }}><Plus size={18}/>新对话</button>
-      <button className="companion-tile" onClick={() => { setCurrent(null); openTab('chat') }}><Mascot state={mascotState}/><span><strong>{name}</strong><small><i className={connected ? 'status-dot' : 'status-dot offline'}/>{connected ? '在线' : '重新连接中'}</small></span></button>
-      <button className="companions-nav" onClick={() => { setBotSettings(undefined); openTab('companions') }}><Plus size={18}/>伙伴与群聊<ChevronRight size={16}/></button>
+      <button className="companions-nav" onClick={openHome}><Sparkles size={18}/>伙伴与群聊<ChevronRight size={16}/></button>
       <div className="search-box"><Search size={17}/><input ref={searchRef} type="search" enterKeyHint="search" aria-label="搜索对话" value={search} onFocus={() => setSearchMode(true)} onChange={e => setSearch(e.target.value)} placeholder="搜索对话"/>{search && <button className="icon-button search-clear" aria-label="清除搜索" onClick={() => { setSearch(''); searchRef.current?.focus() }}><X size={15}/></button>}</div>
       <div className="section-label">{searchQuery ? '搜索结果' : '最近对话'}<span aria-live="polite">{filteredConversations.length}</span></div>
-      <div className="conversation-list">{filteredConversations.map(c => <button key={c.id} className={current === c.id ? 'selected' : ''} onClick={() => { searchRef.current?.blur(); setCurrent(c.id); setSelectedBot(c.bot_id); setModel(c.model); setEffort(c.effort); openTab('chat'); nearBottom.current = true }}>
+      <div className="conversation-list">{filteredConversations.map(c => <button key={c.id} className={current === c.id ? 'selected' : ''} onClick={() => { searchRef.current?.blur(); openConversation(c) }}>
         <span className="conversation-symbol">{c.status === 'waiting' ? <ShieldCheck size={18}/> : c.status === 'running' ? <Loader2 className="spin" size={18}/> : <MessageCircle size={18}/>}</span><span><strong>{c.title}</strong><small>{c.members ? `${c.members.length} 位伙伴 · ` : `${bots.find(b => b.id === c.bot_id)?.name || '绒绒'} · `}{STATUS[c.status] || c.status}</small></span>
       </button>)}{!filteredConversations.length && <p className="search-empty" role="status">{searchQuery ? '没有找到对话' : '还没有对话'}</p>}</div>
-      <div className="sidebar-bottom"><button onClick={() => openTab('workspace')}><Monitor size={18}/>电脑与文件<ChevronRight size={16}/></button><button onClick={() => openTab('routines')}><Clock3 size={18}/>例行任务<ChevronRight size={16}/></button><button onClick={() => openTab('profile')}><Settings2 size={18}/>设置<ChevronRight size={16}/></button></div>
+      <div className="sidebar-bottom"><button onClick={() => openTab('activity')}><Activity size={18}/>活动<ChevronRight size={16}/></button><button onClick={() => openTab('workspace')}><Monitor size={18}/>电脑与文件<ChevronRight size={16}/></button><button onClick={() => openTab('routines')}><Clock3 size={18}/>例行任务<ChevronRight size={16}/></button><button onClick={() => openTab('profile')}><Settings2 size={18}/>设置<ChevronRight size={16}/></button></div>
     </aside>
     <main className={`main-panel ${tab === 'workspace' ? 'workspace-active' : ''}`}>
-      {tab !== 'chat' && tab !== 'profile' && <header className="page-topbar"><button className="icon-button" aria-label="返回对话" onClick={() => openTab('chat')}><ArrowLeft size={21}/></button><span>{tab === 'workspace' ? '工作空间' : tab === 'companions' ? '伙伴与群聊' : '例行任务'}</span><button className="icon-button" aria-label="打开导航" onClick={() => setSidebar(true)}><Menu size={21}/></button></header>}
+      {tab !== 'chat' && tab !== 'profile' && tab !== 'companions' && <header className="page-topbar"><button className="icon-button" aria-label="返回伙伴首页" onClick={openHome}><ArrowLeft size={21}/></button><span>{tab === 'workspace' ? '工作空间' : tab === 'routines' ? '例行任务' : '活动'}</span><button className="icon-button" aria-label="打开导航" onClick={() => setSidebar(true)}><Menu size={21}/></button></header>}
       <div className={`work-layout ${tab === 'workspace' ? 'split' : ''}`}>
         {(tab === 'chat' || tab === 'workspace') && chat}
         {tab === 'workspace' && <Workspace onError={notify}/>}
-        {tab === 'companions' && <Companions bots={bots} initialBot={botSettings} onRefresh={refreshBots} onError={notify} onChat={bot => { setSelectedBot(bot.id); setCurrent(null); setText(''); setAttachments([]); openTab('chat') }} onGroup={group => { setConversations(list => [group, ...list]); setCurrent(group.id); setText(''); setAttachments([]); setModel(group.model); setEffort(group.effort); openTab('chat') }}/>}
+        {tab === 'companions' && <Companions bots={bots} conversations={conversations} initialBot={botSettings} onNavigation={() => setSidebar(true)} onOpen={openConversation} onRefresh={refreshBots} onError={notify} onChat={bot => { setSelectedBot(bot.id); setCurrent(null); setText(''); setAttachments([]); openTab('chat') }} onGroup={group => { setConversations(list => [group, ...list]); openConversation(group) }}/>}
         {tab === 'routines' && <Routines onError={notify} onOpen={id => { setCurrent(id); openTab('chat') }}/>}
-        {tab === 'profile' && <Profile me={me} onUpdate={setMe} onError={notify} onBack={() => openTab('chat')} onNavigation={() => setSidebar(true)} showWorkStatus={showWorkStatus} onWorkStatusChange={enabled => { localStorage.setItem('dots-work-status', String(enabled)); setShowWorkStatus(enabled) }} onLogout={async () => { await post('/api/logout').catch(() => {}); await clearToken(); setLoggedIn(false); setCurrent(null); setEvents([]) }}/>}
+        {tab === 'profile' && <Profile me={me} onUpdate={setMe} onError={notify} onBack={openHome} onNavigation={() => setSidebar(true)} showWorkStatus={showWorkStatus} onWorkStatusChange={enabled => { localStorage.setItem('dots-work-status', String(enabled)); setShowWorkStatus(enabled) }} onLogout={async () => { await post('/api/logout').catch(() => {}); await clearToken(); setLoggedIn(false); setCurrent(null); setEvents([]); openHome() }}/>}
+        {tab === 'activity' && <Runs onError={notify} onOpen={openRunConversation}/>}
       </div>
     </main>
     {detail && <Modal title="任务与资料" className="details-sheet" onClose={() => setDetail(false)}>
       <div className="detail-summary"><Mascot state={mascotState}/><span><strong>{name}</strong><small>{connected ? '在线，随时可以继续工作' : '正在重新连接'}</small></span></div>
       {conversation?.members && <div className="group-members">{conversation.members.map(m => <div key={m.bot_id}><BotAvatar color={bots.find(b => b.id === m.bot_id)?.color}/><span>{m.name}</span><small>{STATUS[m.status] || m.status}</small></div>)}</div>}
-      <div className="detail-tabs"><button onClick={() => openTab('workspace')}>电脑与文件</button><button onClick={() => openTab('routines')}>例行任务</button><button onClick={() => openTab('profile')}>设置</button></div>
+      <div className="detail-tabs"><button onClick={() => { setDetail(false); setVoiceMode(true) }}><Phone size={15}/>语音聊天</button><button onClick={() => openTab('routines')}>例行任务</button><button onClick={() => openTab('profile')}>设置</button></div>
       <h3>当前任务</h3><p className="detail-task">{conversation?.title || '还没有选择任务'}<small>{conversation ? STATUS[conversation.status] : '从对话中告诉我你想做什么'}</small></p>
       <button className="computer-card" onClick={() => openTab('workspace')}><Monitor size={23}/><span><strong>{name}的电脑</strong><small>查看浏览器、接管操作与下载文件</small></span><ChevronRight size={18}/></button>
-      {!conversation?.members && <><h3>长期记忆</h3><p className="memory-preview">{activeBot?.memory || '还没有保存偏好。你可以在对话中告诉我。'}</p><button className="text-button" onClick={() => { setBotSettings(activeBot); openTab('companions') }}>管理记忆<ChevronRight size={15}/></button></>}
+      {!conversation?.members && <><h3>长期记忆</h3><p className="memory-preview">{activeBot?.memory || '还没有保存偏好。你可以在对话中告诉我。'}</p><button className="text-button" onClick={() => { setBotSettings(activeBot); openTab('companions') }}>指令与记忆<ChevronRight size={15}/></button></>}
     </Modal>}
+    {modelSettings && <Modal title="模型与思考" onClose={() => setModelSettings(false)}><div className="model-settings">
+      <Choice label="选择模型" value={model} onChange={value => { setModel(value); setEffort('high') }} options={(me?.models || []).map(value => ({ value, label: MODEL_NAMES[value] || value, description: value.includes('deepseek') ? '轻快响应，适合日常任务' : '深入分析与复杂任务', icon: <Sparkles size={17}/> }))}/>
+      <Choice label="思考强度" value={effort} onChange={setEffort} options={(model.includes('deepseek') ? ['low','high'] : ['low','medium','high','xhigh']).map(value => ({ value, label: `思考 ${value}` }))}/>
+      <p className="companion-note">用于下一条消息；关键动作仍需单独授权。</p>
+    </div></Modal>}
     {menu && <Modal title="添加到对话" className="attachment-sheet" onClose={() => setMenu(false)}><div className="attachment-options">
       <button onClick={() => { setMenu(false); fileRef.current?.click() }}><span className="attachment-option-icon blue"><FolderOpen size={24}/></span><span><strong>上传文件</strong><small>文档、资料与代码 · 最大20MB</small></span><ChevronRight size={17}/></button>
       <button onClick={() => { setMenu(false); imageRef.current?.click() }}><span className="attachment-option-icon violet"><ImagePlus size={24}/></span><span><strong>选择图片</strong><small>从相册添加参考图片</small></span><ChevronRight size={17}/></button>

@@ -38,4 +38,15 @@ describe('protocol nullable fields', () => {
     expect(RoutineSchema.safeParse({ id: 'routine-1', title: 'Daily', prompt: 'Check', cron: '0 9 * * *', timezone: 'UTC', model: 'gpt-6.1-sol', enabled: 1, next_run: 1, thread_id: null, last_error: null }).success).toBe(true)
     expect(BrowserSchema.safeParse({ elements: [{ id: 1, tag: 'button', type: null, label: 'Continue', href: null }] }).success).toBe(true)
   })
+  it('accepts question answers with empty skip text and nullable option', () => {
+    const base = { id: 3, thread_id: 'thread-1', created: 3 }
+    expect(DotEventSchema.safeParse({
+      ...base, kind: 'dots/question/answered',
+      payload: { question_id: 'question-1', status: 'skipped', text: '', option: null },
+    }).success).toBe(true)
+    expect(DotEventSchema.safeParse({
+      ...base, kind: 'dots/question/asked',
+      payload: { question_id: 'question-1', question: 'Choose', options: [{ label: 'One' }] },
+    }).success).toBe(true)
+  })
 })

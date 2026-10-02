@@ -1,6 +1,7 @@
 import os
 import httpx
 from mcp.server.fastmcp import FastMCP, Image
+from pydantic import BaseModel, Field
 
 mcp = FastMCP('dots-computer')
 headers = {'Authorization': 'Bearer ' + os.environ['AGENT_TOKEN']}
@@ -33,6 +34,20 @@ async def schedule(title: str, prompt: str, cron: str, timezone: str = 'Asia/Sha
     """Propose a recurring background task, with a five-field cron expression and IANA timezone. Requires explicit owner approval. Daily 09:00 is '0 9 * * *'. Tasks run even when the phone is closed."""
     async with httpx.AsyncClient(timeout=1900) as client:
         response = await client.post('http://api:8091/agent/routines', headers=headers, json={'title': title, 'prompt': prompt, 'cron': cron, 'timezone': timezone, 'model': model})
+        response.raise_for_status()
+        return response.json()
+
+
+class ChoiceOption(BaseModel):
+    label: str = Field(min_length=1, max_length=100)
+    description: str = Field(default='', max_length=300)
+
+
+@mcp.tool()
+async def ask_choice(question: str, options: list[ChoiceOption]):
+    """Ask the owner one useful clarification with 2–5 distinct choices. Shows an interactive card; selecting a choice or typing an answer resumes this tool. Use when direction/preferences are genuinely needed, not for every step. A choice is conversational input, NEVER permission to publish, send, delete, save memory, or bypass action approval. Do not ask for passwords. If skipped/expired, do not infer an answer."""
+    async with httpx.AsyncClient(timeout=1900) as client:
+        response = await client.post('http://api:8091/agent/questions', headers=headers, json={'question': question, 'options': [option.model_dump() for option in options]})
         response.raise_for_status()
         return response.json()
 

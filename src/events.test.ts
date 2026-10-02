@@ -110,4 +110,28 @@ describe('reduceEvents', () => {
     expect(items).toHaveLength(1)
     expect(items[0]).toMatchObject({ id: 'command-1', role: 'activity', type: 'commandExecution', text: 'echo safe', status: 'completed', data: { aggregatedOutput: 'safe output' } })
   })
+  it('keeps answered choices on their original question and ignores duplicate answer echoes', () => {
+    const asked = event(1, 'dots/question/asked', {
+      question_id: 'question-1', question: 'Pick one', options: [{ label: 'A' }, { label: 'B' }],
+    })
+    const answered = event(2, 'dots/question/answered', { question_id: 'question-1', status: 'answered', text: 'B' })
+    const history = reduceEvents([asked, answered, answered])
+
+    expect(history).toHaveLength(1)
+    expect(history[0]).toMatchObject({
+      id: 'question-1', type: 'question',
+      data: { question: { id: 'question-1', answer: 'B', status: 'answered' } },
+    })
+  })
+
+  it('retains group speaker on question history and following assistant output', () => {
+    const speaker = { id: 'bot-2', name: 'Second partner', color: 'blue' }
+    const asked = event(1, 'dots/question/asked', {
+      question_id: 'question-2', question: 'Continue?', options: [{ label: 'Yes' }], speaker,
+    })
+    const answered = event(2, 'dots/question/answered', { question_id: 'question-2', status: 'answered', text: 'Yes' })
+    const reply = event(3, 'item/agentMessage/delta', { itemId: 'reply-1', delta: 'Continuing.', speaker })
+
+    expect(reduceEvents([asked, answered, reply]).map(item => item.speaker)).toEqual([speaker, speaker])
+  })
 })

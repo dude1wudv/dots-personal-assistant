@@ -9,6 +9,12 @@ export const MeSchema = z.object({ session_id: z.string(), models: z.array(z.str
 export type Me = z.infer<typeof MeSchema>
 export const LoginSchema = z.object({ token: z.string().min(32) })
 export const AttachmentSchema = z.object({ path: z.string(), name: z.string() })
+export const QuestionContentSchema = z.object({ question: z.string(), options: z.array(z.object({ label: z.string(), description: z.string().default('') })) })
+export const QuestionSchema = z.object({ id: z.string(), thread_id: z.string(), turn_id: z.string(), payload: QuestionContentSchema, status: z.string(), created: z.number(), expires: z.number() })
+export type Question = z.infer<typeof QuestionSchema>
+export type QuestionContent = z.infer<typeof QuestionContentSchema>
+export const RunSchema = z.object({ id: z.string(), kind: z.string(), bot_id: z.string().nullable(), thread_id: z.string().nullable(), parent_id: z.string().nullable(), group_id: z.string().nullable(), routine_id: z.string().nullable(), title: z.string(), model: z.string(), effort: z.string(), turn_id: z.string().nullable(), status: z.string(), created: z.number(), started: z.number().nullable().optional(), ended: z.number().nullable().optional(), updated: z.number(), failure_stage: z.string().nullable().optional(), error: z.string().nullable().optional(), stop_requested: z.number().nullable().optional() })
+export type Run = z.infer<typeof RunSchema>
 export const CodexItemSchema = z.looseObject({
   id: z.string(), type: z.string(), text: z.string().optional(), command: z.string().optional(),
   status: z.string().optional(), aggregatedOutput: z.string().nullable().optional(),
@@ -24,6 +30,9 @@ export const EventPayloadSchema = z.looseObject({
   title: z.string().optional(),
   speaker: z.object({ id: z.string(), name: z.string(), color: z.string() }).optional(),
   client_id: z.string().nullable().optional(),
+  question_id: z.string().optional(), question: z.string().optional(),
+  options: QuestionContentSchema.shape.options.optional(),
+  status: z.string().optional(), option: z.number().nullable().optional(),
 })
 export const DotEventSchema = z.object({ id: z.number(), thread_id: z.string().nullable(), kind: z.string(), payload: EventPayloadSchema, created: z.number() })
 export type DotEvent = z.infer<typeof DotEventSchema>
