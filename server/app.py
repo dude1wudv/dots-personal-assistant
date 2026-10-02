@@ -80,39 +80,52 @@ def instruction(bot_id='default'):
 
 
 async def receive_event(kind, payload, approval_id, source):
-    if source and store.one('SELECT id FROM events WHERE source=?', (source,)):
-        return
-    thread_id = payload.get('threadId') or (payload.get('thread') or {}).get('id')
-    if kind == 'runtime/restarted':
-        epoch = payload['epoch']
-        if store.setting('runtime_epoch') != epoch:
-            store.execute("UPDATE approvals SET status='expired' WHERE status IN ('pending','resolving')")
-            for group in store.rows("SELECT id FROM groups WHERE status IN ('running','waiting')"):
-                companions.cancel_queue(store, group['id'])
-            store.execute("UPDATE conversations SET status='interrupted',turn_id=NULL WHERE status IN ('running','waiting')")
-            store.set('runtime_epoch', epoch)
-    if approval_id:
-        store.execute('INSERT OR IGNORE INTO approvals VALUES(?,?,?,?,?,?)', (approval_id, thread_id, kind, json.dumps(payload, ensure_ascii=False), 'pending', time.time()))
-        if thread_id:
-            store.execute("UPDATE conversations SET status='waiting' WHERE id=?", (thread_id,))
-    if kind == 'turn/started':
-        turn = payload.get('turn', {})
-        store.execute("UPDATE conversations SET status='running',turn_id=?,updated=? WHERE id=?", (turn.get('id'), time.time(), thread_id))
-    elif kind == 'turn/completed':
-        turn = payload.get('turn', {})
-        status = 'idle' if turn.get('status') == 'completed' else turn.get('status', 'failed')
-        store.execute('UPDATE conversations SET status=?,turn_id=NULL,updated=? WHERE id=?', (status, time.time(), thread_id))
-        store.execute("UPDATE approvals SET status='expired' WHERE thread_id=? AND status='pending'", (thread_id,))
-    elif kind in ('dots/approval/resolved', 'serverRequest/resolved'):
-        rid = payload.get('approvalId')
-        if not rid and payload.get('requestId') is not None:
-            rid = f"{store.setting('runtime_epoch')}:{payload['requestId']}"
-        if rid:
-            store.execute("UPDATE approvals SET status=CASE WHEN status='pending' THEN 'resolved' ELSE status END WHERE id=?", (rid,))
-    elif kind in ('runtime/stopped', 'runtime/error'):
-        store.execute("UPDATE conversations SET status='interrupted',turn_id=NULL WHERE status IN ('running','waiting')")
-        store.execute("UPDATE approvals SET status='expired' WHERE status='pending'")
-    store.event(kind, payload, thread_id, source)
+    # Consume still awaits each event in order; disk waits must not block HTTP.
+    await asyncio.to_thread(_persist_event, kind, payload, approval_id, source)
+
+
+def _persist_event(kind, payload, approval_id, source):
+    # Keep status changes and their event atomically visible to the group worker.
+    # Create, use and close the connection on this same worker thread.
+    with store.connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        if source and db.execute('SELECT id FROM events WHERE source=?', (source,)).fetchone():
+            return
+        thread_id = payload.get('threadId') or (payload.get('thread') or {}).get('id')
+        now = time.time()
+        if kind == 'runtime/restarted':
+            epoch = payload['epoch']
+            row = db.execute("SELECT value FROM settings WHERE key='runtime_epoch'").fetchone()
+            if not row or json.loads(row['value']) != epoch:
+                db.execute("UPDATE approvals SET status='expired' WHERE status IN ('pending','resolving')")
+                db.execute("UPDATE group_queue SET status='cancelled' WHERE status IN ('queued','running') AND group_id IN (SELECT id FROM groups WHERE status IN ('running','waiting'))")
+                db.execute("UPDATE groups SET status='interrupted',updated=? WHERE status IN ('running','waiting')", (now,))
+                db.execute("UPDATE conversations SET status='interrupted',turn_id=NULL WHERE status IN ('running','waiting')")
+                db.execute("INSERT INTO settings(key,value) VALUES('runtime_epoch',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (json.dumps(epoch),))
+        if approval_id:
+            db.execute('INSERT OR IGNORE INTO approvals VALUES(?,?,?,?,?,?)', (approval_id, thread_id, kind, json.dumps(payload, ensure_ascii=False), 'pending', now))
+            if thread_id:
+                db.execute("UPDATE conversations SET status='waiting' WHERE id=?", (thread_id,))
+        if kind == 'turn/started':
+            turn = payload.get('turn', {})
+            db.execute("UPDATE conversations SET status='running',turn_id=?,updated=? WHERE id=?", (turn.get('id'), now, thread_id))
+        elif kind == 'turn/completed':
+            turn = payload.get('turn', {})
+            status = 'idle' if turn.get('status') == 'completed' else turn.get('status', 'failed')
+            db.execute('UPDATE conversations SET status=?,turn_id=NULL,updated=? WHERE id=?', (status, now, thread_id))
+            db.execute("UPDATE approvals SET status='expired' WHERE thread_id=? AND status='pending'", (thread_id,))
+        elif kind in ('dots/approval/resolved', 'serverRequest/resolved'):
+            rid = payload.get('approvalId')
+            if not rid and payload.get('requestId') is not None:
+                row = db.execute("SELECT value FROM settings WHERE key='runtime_epoch'").fetchone()
+                epoch = json.loads(row['value']) if row else None
+                rid = f"{epoch}:{payload['requestId']}"
+            if rid:
+                db.execute("UPDATE approvals SET status=CASE WHEN status='pending' THEN 'resolved' ELSE status END WHERE id=?", (rid,))
+        elif kind in ('runtime/stopped', 'runtime/error'):
+            db.execute("UPDATE conversations SET status='interrupted',turn_id=NULL WHERE status IN ('running','waiting')")
+            db.execute("UPDATE approvals SET status='expired' WHERE status='pending'")
+        db.execute('INSERT OR IGNORE INTO events(source,thread_id,kind,payload,created) VALUES(?,?,?,?,?)', (source, thread_id, kind, json.dumps(payload, ensure_ascii=False), now))
 
 
 async def new_conversation(title, model, bot_id='default'):

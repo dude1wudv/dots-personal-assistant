@@ -1,10 +1,13 @@
+from contextlib import contextmanager
+import sqlite3
+import time
 import asyncio
 import hashlib
 import gc
 import httpx
 import json
 import tempfile
-import time
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -347,3 +350,74 @@ def test_local_memory_gate_shows_note_and_decline_resumes_thread_without_saving(
         assert store.setting('memory', '') == ''
 
     asyncio.run(scenario())
+
+
+def test_receive_event_allows_heartbeat_while_store_event_is_writing(backend, monkeypatch):
+    store, _ = backend
+    writer_release = threading.Event()
+    writer_wait_results = []
+    original_connect = store.connect
+
+    @contextmanager
+    def slow_connect():
+        with original_connect() as db:
+            writer_wait_results.append(writer_release.wait(timeout=1))
+            yield db
+
+    monkeypatch.setattr(store, 'connect', slow_connect)
+
+    async def scenario():
+        receiver = asyncio.create_task(
+            server_app.receive_event('synthetic/event', {'value': 'test'}, None, None)
+        )
+
+        async def heartbeat():
+            writer_release.set()
+
+        beat = asyncio.create_task(heartbeat())
+        await asyncio.gather(receiver, beat)
+
+    asyncio.run(scenario())
+
+    assert writer_wait_results == [True]
+
+
+def test_completed_event_rolls_back_status_and_pending_approval_on_insert_failure(backend):
+    store, _ = backend
+    now = time.time()
+    store.execute(
+        'INSERT INTO conversations(id,title,model,effort,status,turn_id,created,updated) VALUES(?,?,?,?,?,?,?,?)',
+        ('thread-rollback', 'Rollback', 'gpt-6.1-sol', 'high', 'running', 'turn-rollback', now, now),
+    )
+    store.execute(
+        'INSERT INTO approvals VALUES(?,?,?,?,?,?)',
+        ('approval-rollback', 'thread-rollback', 'item/permissions/requestApproval', '{}', 'pending', now),
+    )
+    store.execute("""
+        CREATE TRIGGER reject_completion_event BEFORE INSERT ON events
+        WHEN NEW.kind='turn/completed'
+        BEGIN
+            SELECT RAISE(ABORT, 'simulated event write failure');
+        END
+    """)
+
+    with pytest.raises(sqlite3.IntegrityError, match='simulated event write failure'):
+        asyncio.run(server_app.receive_event(
+            'turn/completed',
+            {'threadId': 'thread-rollback', 'turn': {'status': 'completed'}},
+            None,
+            'source-rollback',
+        ))
+
+    assert store.one(
+        'SELECT status,turn_id FROM conversations WHERE id=?',
+        ('thread-rollback',),
+    ) == {'status': 'running', 'turn_id': 'turn-rollback'}
+    assert store.one(
+        'SELECT status FROM approvals WHERE id=?',
+        ('approval-rollback',),
+    )['status'] == 'pending'
+    assert store.rows(
+        "SELECT id FROM events WHERE thread_id=? AND kind='turn/completed'",
+        ('thread-rollback',),
+    ) == []
